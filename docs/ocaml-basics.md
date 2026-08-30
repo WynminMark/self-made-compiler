@@ -578,25 +578,137 @@ ocamlfind ocamlopt -package str hello.ml -o hello   (* 编译成可执行 *)
 
 ### 用 dune（推荐，写编译器项目用这个）
 
-工程目录：
+**dune 是 OCaml 的构建系统**，类似 make/cmake/cargo。负责编译、管多文件多模块依赖、增量编译、链接第三方库。`ocaml x.ml` 是玩具写法，写编译器必须用 dune。
+
+#### 最小工程结构
+
 ```
 hello_ocaml/
-├── dune-project      # 内容: (lang dune 3.0)
-├── dune              # 构建规则
+├── dune-project      ← 项目级声明（整个仓库一个）
+├── dune              ← 当前目录的构建规则（每个目录一个）
 └── hello.ml
 ```
 
-`dune` 文件内容：
+两个文件都**无扩展名**，分别叫 `dune-project` 和 `dune`（全小写）。
+
+#### `dune-project` 内容
+
+```lisp
+(lang dune 3.0)
 ```
+
+Lisp 风格语法（括号 + 关键字）。`3.0` 是 dune 语法的版本号，写 `3.0` 是当前主流。
+
+#### `dune` 文件内容
+
+```lisp
 (executable
  (name hello))
 ```
 
-运行：
-```bash
-dune exec ./hello.exe    # 编译并运行
-dune build              # 只编译
+- `(executable ...)` —— 构建一个可执行文件（不是库）
+- `(name hello)` —— 入口源码是 `hello.ml`（填**不带 `.ml`** 的根名）
+
+#### `(name X)` 必须和源码文件名对应（硬规则）
+
 ```
+(name calc)  →  找 calc.ml  →  产物 calc.exe
+(name hello) →  找 hello.ml →  产物 hello.exe
+```
+
+名字和文件名是**硬绑定**：写 `(name calc)` 但只有 `main.ml` → 报 `Missing file calc.ml`。三者（dune 里的 name、源码文件、产物）共享同一个根名。
+
+#### 常用命令
+
+```bash
+dune exec ./hello.exe       # 编译并立即运行（最常用）
+dune build                  # 只编译，不运行
+dune clean                  # 清理 _build 目录
+dune runtest                # 跑测试（配了测试的话）
+```
+
+#### `.exe` 后缀的约定（不是 Linux 要求）
+
+dune 跨平台，Windows 可执行文件必须 `.exe`，所以 dune 统一规定产物都叫 `名字.exe`，**Linux 上也加**。`hello.exe` 实际是普通 Linux ELF 文件，只是名字带 `.exe`。
+
+`dune exec` 按产物名**精确查找**，必须带 `.exe`：
+
+```bash
+dune exec ./hello.exe    # ✅
+dune exec ./hello        # ❌ Program not found
+```
+
+也可以直接执行产物（绕开 dune 命名，含 `/` 即按路径执行）：
+```bash
+_build/default/hello.exe     # ✅ 直接跑产物
+```
+
+#### dune 默认把警告当错误
+
+dune 的工程哲学：警告就该修。所以警告会升级为错误导致编译失败。例：
+
+```
+Error (warning 37 [unused-constructor]): constructor Sub is never used to build values.
+```
+
+这是**好事**——逼你保持代码干净。若确需关闭（不推荐），在 `dune` 里加：
+
+```lisp
+(executable
+ (name calc)
+ (flags :standard -warn-error -a))      ; 警告不再升级为错误
+```
+
+#### 多目录项目结构
+
+```
+self-made-compiler/
+├── dune-project          ← 项目根（整个仓库一个）
+├── hello_ocaml/
+│   ├── dune              ← (executable (name hello))
+│   └── hello.ml
+└── calc/
+    ├── dune              ← (executable (name calc))
+    └── calc.ml
+```
+
+每个子目录一个 `dune`，各管各的；`dune-project` 整个仓库只要一个在根。在仓库根敲：
+
+```bash
+dune exec ./calc/calc.exe       # 跑指定那个
+```
+
+#### 引用第三方库
+
+在 `dune` 里声明 `(libraries ...)`：
+
+```lisp
+(executable
+ (name calc)
+ (libraries str))              ← 引用 str 库
+```
+
+`dune build` 自动链接，不用手动 `ocamlfind ocamlopt -package str ...`。
+
+#### 接口文件 `.mli`（可选）
+
+`.ml` 是实现，`.mli` 是接口（声明对外暴露什么）。有 `.mli` 时 dune **强制实现匹配接口**——多一个少一个都报错：
+
+```
+Error: The value `hello' is required but not provided
+```
+
+`.mli` 的价值是**信息隐藏**（不声明的 = 外部不可见）。练基础时可先删掉 `.mli`，学到模块系统再正式用。
+
+#### `ocaml` 脚本模式 vs `dune` 编译模式的差异
+
+| | `ocaml hello.ml` | `dune exec ./hello.exe` |
+|---|---|---|
+| 模式 | 脚本解释执行 | 先**全文件类型检查**，通过后才编译运行 |
+| 顺序 | 顶层绑定从上到下逐个求值 | 整个文件一起类型检查 |
+| 部分报错 | 前面的副作用可能先执行，后面才报错 | 类型检查阶段就拦住，不执行任何代码 |
+
+写编译器时以 `dune` 的"全文件类型检查"为准——它更接近真实编译器行为。
 
 ---
 
@@ -612,6 +724,7 @@ dune build              # 只编译
 - `match ... with` 模式匹配，编译器查穷尽性
 - 递归必须 `rec`，不能偷偷自引用
 - `()` 是 unit，`let () = ...` 是 main 入口
+- **dune**：`(name X)` 必须对应 `X.ml`；产物 `X.exe`（`.exe` 是 dune 跨平台约定，Linux 也加）；`dune exec ./X.exe` 运行；警告默认当错误
 
 ---
 
