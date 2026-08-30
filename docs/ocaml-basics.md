@@ -226,14 +226,20 @@ print_endline @@ render s_text   (* @@ 是反管道，低优先级应用 *)
 
 > `|>` 从左往右流（数据 → 函数）；`@@` 从右往左应用（函数 @@ 数据）。日常用 `|>` 居多。
 
-**构造子也能进管道**：构造子本质是函数（`Text : string -> greeting`），可以管道传递：
+**构造子进管道的陷阱**：构造子能用来构造值（`Text "hi"`），也能在管道中间环节出现（`greet "ocaml" |> (fun s -> Text s) |> render`）。但**构造子不是一等函数**——不能把裸 `Text` 当 `string -> greeting` 的函数值传递：
+
 ```ocaml
+(* ❌ 错：构造子不能当函数值传 *)
 let print_greeting ctor =
   greet "ocaml" |> ctor |> render |> print_endline
+let () = print_greeting Text       (* Error: This expression should not be a constructor *)
 
-let () = print_greeting Text      (* 把 Text 构造子当函数传进去 *)
-let () = print_greeting Shout
+(* ✅ 对：用 lambda 包一层 *)
+let () = print_greeting (fun s -> Text s)
+let () = print_greeting (fun s -> Shout s)
 ```
+
+报错信息：`This expression should not be a constructor, the expected type is string -> greeting`。这是 OCaml 的经典坑：构造子只能构造值，不能当函数值传递。需要函数值时写 `fun x -> 构造子 x` 包一层。
 
 > 口诀：**`f x y`（空格）= `f` 贪心吃多参数；`x |> f` = `x` 作为唯一参数喂给 `f`。** 写编译器时 AST 变换一路 `|>` 下去是常态。
 
