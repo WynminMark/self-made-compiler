@@ -498,7 +498,366 @@ let find_opt k alist =
 
 ---
 
-## 10. 可变性（命令式特性，了解即可）
+## 10. 常用标准库函数（List / String 等）
+
+OCaml 标准库按模块组织，模块名**大写开头**（`List`、`String`、`Array`…）。模块里的函数用 `模块名.函数名` 调用，如 `List.map`、`String.length`。这些**不是关键字**，是预定义的普通函数。
+
+### 10.1 List 模块（列表操作，最常用）
+
+| 函数 | 类型 | 作用 |
+|---|---|---|
+| `List.map` | `('a -> 'b) -> 'a list -> 'b list` | 对每个元素应用函数 |
+| `List.rev` | `'a list -> 'a list` | 反转列表 |
+| `List.iter` | `('a -> unit) -> 'a list -> unit` | 对每个元素执行副作用（如打印） |
+| `List.fold_left` | `('a -> 'b -> 'a) -> 'a -> 'b list -> 'a` | 左折叠，带累加器（尾递归友好） |
+| `List.fold_right` | `('a -> 'b -> 'b) -> 'a list -> 'b -> 'b` | 右折叠（非尾递归） |
+| `List.length` | `'a list -> int` | 列表长度 |
+| `List.nth` | `'a list -> int -> 'a` | 取第 i 个（O(i)，慢） |
+| `List.append` / `@` | `'a list -> 'a list -> 'a list` | 拼接（`@` 是中缀写法） |
+| `List.filter` | `('a -> bool) -> 'a list -> 'a list` | 按谓词过滤 |
+| `List.find_opt` | `('a -> bool) -> 'a list -> 'a option` | 找第一个满足的，返回 option |
+| `List.assoc_opt` | `'a -> ('a * 'b) list -> 'b option` | 在关联列表里按键查找 |
+| `List.mem` | `'a -> 'a list -> bool` | 是否包含某元素 |
+| `List.sort` | `('a -> 'a -> int) -> 'a list -> 'a list` | 排序（`compare` 是内置比较） |
+| `List.sort_uniq` | `('a -> 'a -> int) -> 'a list -> 'a list` | 排序并去重 |
+
+**调用示例**（注释是返回值）：
+
+```ocaml
+(* ---- 转换 / 遍历 ---- *)
+List.map (fun x -> x * 2) [1; 2; 3]              (* [2; 4; 6] *)
+List.map string_of_int [1; 2; 3]                  (* ["1"; "2"; "3"] *)
+List.iter (fun x -> print_int x) [1; 2; 3]        (* 打印 123，返回 () *)
+List.filter (fun x -> x mod 2 = 0) [1; 2; 3; 4]   (* [2; 4] *)
+List.rev [1; 2; 3]                                (* [3; 2; 1] *)
+
+(* ---- 折叠（带累加器） ---- *)
+(* fold_left：从左往右，尾递归友好。f 接 acc 再接 element *)
+List.fold_left (fun acc x -> acc + x) 0 [1; 2; 3; 4]   (* 10，求和 *)
+List.fold_left (fun acc x -> x :: acc) [] [1; 2; 3]    (* [3; 2; 1]，等价 rev *)
+(* fold_right：从右往左，非尾递归。f 接 element 再接 acc *)
+List.fold_right (fun x acc -> x + acc) [1; 2; 3; 4] 0  (* 10 *)
+
+(* ---- 查找 / 长度 ---- *)
+List.length [1; 2; 3]                             (* 3 *)
+List.nth [10; 20; 30] 1                           (* 20，O(i) 慢操作 *)
+List.find_opt (fun x -> x > 1) [1; 2; 3]          (* Some 2 *)
+List.assoc_opt "x" [("x", 1); ("y", 2)]           (* Some 1，关联列表按键找 *)
+List.mem 2 [1; 2; 3]                              (* true，是否包含 *)
+
+(* ---- 拼接 / 头插 ---- *)
+List.append [1; 2] [3; 4]                         (* [1; 2; 3; 4] *)
+[1; 2] @ [3; 4]                                   (* 同上，中缀写法 *)
+0 :: [1; 2]                                       (* [0; 1; 2]，头插 O(1) *)
+
+(* ---- 排序 / 去重（偶尔用） ---- *)
+List.sort compare [3; 1; 2]                       (* [1; 2; 3] *)
+List.sort_uniq compare [1; 1; 2]                  (* [1; 2] *)
+```
+
+**关键模式：递归 + 头插 + `List.rev`**
+
+```ocaml
+(* 边收集边头插（O(1)），最后反转（O(n)），总 O(n) *)
+let rec aux acc = ... aux (x :: acc) ...
+in List.rev acc
+```
+你的 `tokenize` 作业就是这个模式。**不要用 `acc @ [x]` 尾插**，那是 O(n²)。
+
+### 10.2 String 模块（字符串操作）
+
+| 函数 | 类型 | 作用 |
+|---|---|---|
+| `String.length` | `string -> int` | 字符串长度 |
+| `String.get` / `s.[i]` | `string -> int -> char` | 取第 i 个字符（`s.[i]` 是中缀写法） |
+| `String.sub` | `string -> int -> int -> string` | 取子串（**起始位置 + 长度**，不是起止） |
+| `String.concat` | `string -> string list -> string` | 用分隔符拼接字符串列表 |
+| `String.make` | `int -> char -> string` | 造长度 n 的字符串，全填某字符 |
+| `String.uppercase_ascii` | `string -> string` | 转大写 |
+| `String.lowercase_ascii` | `string -> string` | 转小写 |
+| `String.equal` | `string -> string -> bool` | 显式相等比较 |
+| `String.to_seq` | `string -> char Seq.t` | 转成字符惰性序列 |
+| `String.iter` | `(char -> unit) -> string -> unit` | 遍历每个字符执行副作用 |
+
+**调用示例**：
+
+```ocaml
+(* ---- 取 / 设 ---- *)
+String.length "hello"                  (* 5 *)
+String.get "hello" 0                   (* 'h'，等价 "hello".[0] *)
+"hello".[1]                            (* 'e'，中缀写法 *)
+
+(* ---- 子串（注意：参数是 起始位置 + 长度，不是起止） ---- *)
+String.sub "hello world" 6 5           (* "world"，从位置6取5个字符 *)
+String.sub "abc" 0 2                   (* "ab" *)
+
+(* ---- 拼接 / 造串 ---- *)
+String.concat ", " ["a"; "b"; "c"]     (* "a, b, c"，第一个参数是分隔符 *)
+String.concat "" ["a"; "b"; "c"]       (* "abc"，空分隔 = 直连 *)
+String.make 3 'x'                      (* "xxx"，造长度3全填 x *)
+String.make 1 'x'                      (* "x"，char→string 常用技巧 *)
+"a" ^ "b"                              (* "ab"，中缀拼接，不用 String.concat *)
+
+(* ---- 大小写 / 比较 ---- *)
+String.uppercase_ascii "abc"           (* "ABC" *)
+String.lowercase_ascii "ABC"           (* "abc" *)
+String.equal "abc" "abc"               (* true，显式相等 *)
+
+(* ---- 遍历 ---- *)
+String.to_seq "abc"                    (* char Seq.t，惰性序列 *)
+String.iter (fun c -> print_char c) "abc"   (* 打印 abc *)
+```
+
+陷阱：`String.sub` 参数是**起始 + 长度**，不是"起止下标"。`String.sub "hello" 1 3` = `"ell"`（从位置1取3个），不是 `"el"`。
+
+### 10.3 其他常用模块
+
+| 函数 | 类型 | 作用 |
+|---|---|---|
+| `string_of_int` | `int -> string` | int 转 string（顶层函数） |
+| `int_of_string` | `string -> int` | string 转 int（解析失败抛 `Failure`） |
+| `string_of_float` / `float_of_string` | 互转 | float 版本 |
+| `Char.code` | `char -> int` | char 转 ASCII 码 |
+| `Char.chr` | `int -> char` | ASCII 码转 char |
+| `Printf.printf` | `('a, out_channel, unit) format -> 'a` | 格式化打印 |
+| `print_endline` | `string -> unit` | 打印字符串 + 换行 |
+| `print_int` | `int -> unit` | 打印 int（无换行） |
+| `print_char` | `char -> unit` | 打印 char |
+| `failwith` | `string -> 'a` | 抛 `Failure` 异常 |
+
+**调用示例**：
+
+```ocaml
+(* ---- int / string / float 互转（顶层函数，不在模块里） ---- *)
+string_of_int 42                       (* "42" *)
+int_of_string "42"                     (* 42，解析失败抛 Failure *)
+string_of_float 3.14                   (* "3.14" *)
+float_of_string "3.14"                 (* 3.14 *)
+
+(* ---- char 与 ASCII ---- *)
+Char.code 'A'                          (* 65，char → ASCII *)
+Char.chr 65                            (* 'A'，ASCII → char *)
+'A' <= c && c <= 'Z'                   (* 判断大写字母 *)
+
+(* ---- 打印 ---- *)
+print_endline "hi"                     (* 打印 hi\n，返回 () *)
+print_int 42                           (* 打印 42，无换行 *)
+print_char 'x'                         (* 打印 x *)
+Printf.printf "%d = %s\n" 42 "answer"  (* 打印 42 = answer\n *)
+(* 格式符：%d int  %s string  %c char  %f float  %b bool  %a 自定义 *)
+
+(* ---- 异常 ---- *)
+failwith "something went wrong"        (* 抛 Failure 异常，类型 'a（任意） *)
+raise (Failure "msg")                  (* 等价 failwith，但 raise 要 exn 类型 *)
+```
+
+### 10.4 常见管道组合模式
+
+```ocaml
+(* 模式 1：map 后拼接成字符串 *)
+[1; 2; 3]
+|> List.map string_of_int
+|> String.concat "; "
+|> Printf.printf "[%s]\n"
+(* 输出 [1; 2; 3] *)
+
+(* 模式 2：fold_left 累计 *)
+[1; 2; 3; 4]
+|> List.fold_left (fun acc x -> acc + x) 0
+|> print_int
+
+(* 模式 3：filter + map *)
+[1; 2; 3; 4; 5]
+|> List.filter (fun x -> x mod 2 = 0)
+|> List.map (fun x -> x * x)
+(* [4; 16]，先过滤偶数再平方 *)
+```
+
+### 10.5 数据结构选择指南（List / Array / Queue / Stack / Hashtbl / Map）
+
+OCaml 标准库提供多种集合，选错会 O(n²) 或栈溢出。按"要做什么操作"来选。
+
+#### 一览表（按场景选）
+
+| 结构 | 底层 | 可变性 | 头部操作 | 尾部操作 | 随机访问 | 键值查找 | 何时用 |
+|---|---|---|---|---|---|---|---|
+| `list` | 单向链表 | **不可变** | O(1) `::` | O(n) `lst @ [x]` | O(n) | — | AST、token 流、递归遍历主力 |
+| `array` | 连续内存数组 | **可变** | O(n) | O(1) 摊销 | O(1) `a.(i)` | — | 缓冲区、查表、需要索引访问 |
+| `Bytes` | 可变字节序列 | **可变** | O(n) | O(1) 摊销 | O(1) `b.[i]` | — | 二进制数据、字符缓冲 |
+| `Queue` | 双端链表 | **可变** | O(1) 入队 | O(1) 出队 | 不支持 | — | FIFO 队列、广度优先 |
+| `Stack` | 可变链表 | **可变** | O(1) push | O(1) pop | 不支持 | — | LIFO 栈、深度优先、待处理列表 |
+| `Hashtbl` | 哈希表 | **可变** | — | — | — | O(1) 均摊 | 符号表、缓存、大键值 |
+| `Map`（`Map.Make`） | 平衡树 | **不可变** | — | — | — | O(log n) | 小键值、需要有序/不可变快照 |
+| `Set`（`Set.Make`） | 平衡树 | **不可变** | — | — | — | O(log n) | 集合运算（并/交/差） |
+| `Seq` | 惰性流 | 惰性 | 惰性 | 惰性 | 不支持 | — | 流式读大文件、无穷序列 |
+
+#### list（不可变单向链表）
+
+最常用，详见 §10.1。要点：头部 O(1)、尾部 O(n)、不可变（改一次复制一份）。递归 + 头插 + `List.rev` 是经典模式。**不支持 O(1) 随机访问**——`List.nth lst i` 是 O(i)。需要按下标取用换 `array`。
+
+```ocaml
+let l = [1; 2; 3]
+let l2 = 0 :: l          (* [0; 1; 2; 3]，O(1)，原 l 不变 *)
+let l3 = l @ [4]         (* [1; 2; 3; 4]，O(n)，复制左整条 *)
+let _ = List.nth l 1     (* 2，但 O(1) 这里只是因为短，本质 O(i) *)
+```
+
+#### array（可变数组）
+
+连续内存，**可变**，O(1) 随机访问 `a.(i)`。长度固定（不能动态追加，要改长度用 `Bytes` 或自己管理）。
+
+常用函数：
+
+| 函数 | 作用 |
+|---|---|
+| `Array.make n x` | 造长度 n 的数组，全填 x |
+| `Array.get a i` / `a.(i)` | 取第 i 个 |
+| `Array.set a i x` / `a.(i) <- x` | 设第 i 个（**可变**） |
+| `Array.length a` | 长度 |
+| `Array.init n f` | 用 `f 0; f 1; ...` 初始化 |
+| `Array.map f a` | 对每个元素应用 f，返回新数组 |
+| `Array.iter f a` | 遍历执行副作用 |
+| `Array.to_list` / `Array.of_list` | array ↔ list 互转 |
+
+```ocaml
+let a = Array.make 5 0          (* [|0; 0; 0; 0; 0|] *)
+let () = a.(0) <- 42            (* 可变修改：[|42; 0; 0; 0; 0|] *)
+let l = Array.to_list a         (* 转成 list：[42; 0; 0; 0; 0] *)
+let a2 = Array.init 3 (fun i -> i * i)   (* [|0; 1; 4|] *)
+```
+
+写编译器用途：存符号表条目（按下标查）、字符缓冲（配合 `Bytes`）、预分配大小的缓存。
+
+#### Queue（可变 FIFO 队列）
+
+两端都 O(1)：`push`（入队）、`pop`（出队）。**可变**，不返回新队列。
+
+| 函数 | 作用 |
+|---|---|
+| `Queue.create ()` | 建空队列 |
+| `Queue.push x q` | 入队尾，O(1) |
+| `Queue.pop q` | 出队头，O(1)，队列空抛 `Queue.Empty` |
+| `Queue.peek q` | 看队头不出队 |
+| `Queue.is_empty q` | 是否空 |
+| `Queue.length q` | 长度 |
+| `Queue.iter f q` | 遍历 |
+
+```ocaml
+let q = Queue.create ()
+let () = Queue.push 1 q
+let () = Queue.push 2 q
+let _ = Queue.pop q     (* 1，FIFO：先入先出 *)
+let _ = Queue.pop q     (* 2 *)
+```
+
+写编译器用途：广度优先遍历 AST、工作列表（待处理任务队列）、token 缓冲。
+
+#### Stack（可变 LIFO 栈）
+
+两端都 O(1)：`push`（压栈）、`pop`（弹栈）。**可变**。
+
+| 函数 | 作用 |
+|---|---|
+| `Stack.create ()` | 建空栈 |
+| `Stack.push x s` | 压栈顶，O(1) |
+| `Stack.pop s` | 弹栈顶，O(1)，栈空抛 `Stack.Empty` |
+| `Stack.top s` | 看栈顶不弹出 |
+| `Stack.is_empty s` | 是否空 |
+
+```ocaml
+let s = Stack.create ()
+let () = Stack.push 1 s
+let () = Stack.push 2 s
+let _ = Stack.pop s     (* 2，LIFO：后入先出 *)
+let _ = Stack.pop s     (* 1 *)
+```
+
+写编译器用途：括号匹配、表达式求值的操作数栈、深度优先遍历的待处理节点、作用域栈（进入函数压栈、退出弹栈）。
+
+#### Hashtbl（可变哈希表，键值存储）
+
+**可变**，O(1) 均摊查找。写编译器的符号表主力。
+
+| 函数 | 作用 |
+|---|---|
+| `Hashtbl.create n` | 建表，n 是初始桶数 |
+| `Hashtbl.add h k v` | 加键值对（允许重复键） |
+| `Hashtbl.find h k` | 找键的值，找不到抛 `Not_found` |
+| `Hashtbl.find_opt h k` | 找键，返回 `v option`（推荐，不抛异常） |
+| `Hashtbl.replace h k v` | 设键值（覆盖现有键） |
+| `Hashtbl.remove h k` | 删键 |
+| `Hashtbl.mem h k` | 是否存在该键 |
+
+```ocaml
+let h = Hashtbl.create 16
+let () = Hashtbl.replace h "x" 1
+let v = Hashtbl.find_opt h "x"   (* Some 1 *)
+let v2 = Hashtbl.find_opt h "y"  (* None *)
+```
+
+写编译器用途：变量名 → 类型/值的符号表、字符串内化（interning）、缓存。
+
+#### Map（不可变平衡树，有序键值）
+
+**不可变**，O(log n) 查找。需要先 `Map.Make(Key)` 模块化（Key 要支持比较）。
+
+```ocaml
+module StringMap = Map.Make(String)   (* 以 string 为键的 Map *)
+let m = StringMap.empty
+let m = StringMap.add "x" 1 m          (* 返回新 Map，原 m 不变 *)
+let v = StringMap.find_opt "x" m       (* Some 1 *)
+```
+
+何时用 Map 而非 Hashtbl：
+- 需要**不可变快照**（多版本符号表，回溯）
+- 需要**按序遍历**键
+- 键少（哈希表有固定开销）
+- 想要纯函数式（测试友好）
+
+写编译器用途：纯函数式类型环境（作用域回溯快）、有序符号表。
+
+#### Set（不可变平衡树集合）
+
+类似 `Map` 但只存键（无值）。`Set.Make(Elem)` 模块化。
+
+```ocaml
+module StringSet = Set.Make(String)
+let s = StringSet.empty
+let s = StringSet.add "x" s
+let s2 = StringSet.union s (StringSet.singleton "y")  (* 并集 *)
+```
+
+写编译器用途：活变量集合（数据流分析）、自由变量集合、已访问节点集合。
+
+#### Seq（惰性序列）
+
+不立即计算，要一个产一个。适合流式处理大文件、无穷流（如斐波那契）。
+
+```ocaml
+let naturals = Seq.init (fun i -> i)   (* 无穷自然数序列 *)
+naturals
+|> Seq.take 5                          (* 只取前5个：[0;1;2;3;4] *)
+|> List.of_seq                          (* 转成 list 才能打印 *)
+```
+
+写编译器用途：按需读 token 流、大文件分块处理。日常小数据用 list 即可。
+
+#### 速记口诀
+
+- **不可变 + 递归遍历** → `list`
+- **O(1) 随机访问 / 可变缓冲** → `array`（或 `Bytes` 存字节）
+- **FIFO 工作列表** → `Queue`
+- **LIFO 栈** → `Stack`
+- **符号表 / 缓存（可变）** → `Hashtbl`
+- **符号表 / 有序 / 不可变快照** → `Map`
+- **集合运算** → `Set`
+- **流式 / 大数据惰性** → `Seq`
+
+> 写编译器最常用：`list`（AST/遍历）、`Hashtbl` 或 `Map`（符号表）、`Stack`（作用域/求值栈）。`Array` 用于需要索引的查表。
+
+---
+
+## 11. 可变性（命令式特性，了解即可）
 
 默认不可变。需要可变时：
 
@@ -519,7 +878,7 @@ let n = !counter              (* ! 前缀：取 ref 的值 *)
 
 ---
 
-## 11. 模块（简述）
+## 12. 模块（简述）
 
 OCaml 用模块组织代码，模块名**大写开头**。
 
@@ -541,7 +900,7 @@ end
 
 ---
 
-## 12. 注释
+## 13. 注释
 
 ```ocaml
 (* 单行注释 *)
@@ -556,7 +915,7 @@ end
 
 ---
 
-## 13. 运行一个程序
+## 14. 运行一个程序
 
 ### 顶层入口
 
@@ -712,7 +1071,7 @@ Error: The value `hello' is required but not provided
 
 ---
 
-## 14. 速记口诀
+## 15. 速记口诀
 
 - **大写 = 构造子/模块；小写 = 变量/类型/字段**
 - `let` 定义，`let ... in` 局部表达式，`let rec` 递归
@@ -725,6 +1084,7 @@ Error: The value `hello' is required but not provided
 - 递归必须 `rec`，不能偷偷自引用
 - `()` 是 unit，`let () = ...` 是 main 入口
 - **dune**：`(name X)` 必须对应 `X.ml`；产物 `X.exe`（`.exe` 是 dune 跨平台约定，Linux 也加）；`dune exec ./X.exe` 运行；警告默认当错误
+- **标准库**：`List.map` 转换、`List.fold_left` 累积、`List.rev` 反转、`List.iter` 副作用遍历；`String.sub` 取子串、`String.concat` 拼接；递归 + 头插 + `List.rev` 是列表处理经典模式
 
 ---
 
