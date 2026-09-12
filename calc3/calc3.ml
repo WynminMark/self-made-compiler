@@ -59,36 +59,36 @@ let parse (input: string) : expr =
   let pos = ref 0 in
   let current_token () = List.nth tokens !pos in
   let advance () = incr pos in
-  let rec parse_expr tokens =
-    let left = parse_term tokens in
+  let rec parse_expr () =
+    let left = parse_term () in
     let rec loop left =
       match current_token () with
-      | PLUS -> advance (); loop (Add (left, parse_term tokens))
-      | MINUS -> advance (); loop (Sub (left, parse_term tokens))
+      | PLUS -> advance (); loop (Add (left, parse_term ()))
+      | MINUS -> advance (); loop (Sub (left, parse_term ()))
       | _ -> left
     in
     loop left
-  and parse_term tokens =
-    let left = parse_factor tokens in
+  and parse_term () =
+    let left = parse_factor () in
     let rec loop left =
       match current_token () with
-      | STAR -> advance (); loop (Mul (left, parse_factor tokens))
-      | SLASH -> advance (); loop (Div (left, parse_factor tokens))
+      | STAR -> advance (); loop (Mul (left, parse_factor ()))
+      | SLASH -> advance (); loop (Div (left, parse_factor ()))
       | _ -> left
     in
     loop left
-  and parse_factor tokens = 
+  and parse_factor () = 
     match current_token () with
     | INT n -> advance (); Num n
-    | MINUS -> advance (); Neg (parse_factor tokens)
-    | LPAREN -> advance (); let e = parse_expr tokens in
+    | MINUS -> advance (); Neg (parse_factor ())
+    | LPAREN -> advance (); let e = parse_expr () in
                  (match current_token () with
                   | RPAREN -> advance (); e
                   | _ -> failwith "Expected closing parenthesis")
     | _ -> failwith "Unexpected token in factor"
   in
 
-  let result = parse_expr tokens in
+  let result = parse_expr () in
   match current_token () with
   | EOF -> result
   | _ -> failwith "Unexpected token after expression"
