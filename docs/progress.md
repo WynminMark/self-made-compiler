@@ -13,8 +13,8 @@
 | 阶段 | 内容 | 需要的 OCaml 技能 | 状态 |
 |---|---|---|---|
 | 0. 基础 | let/rec/函数/ADT/match/管道/异常 | 同左 | ✅ |
-| 1. 词法分析 lexer | 把字符串切成 token 流 | ocamllex、正则规则、lexbuf | ⬜️ 第三课 |
-| 2. 语法分析 parser | token 流 → AST | menhir（或手写递归下降）、文法、优先级 | ⬜️ 第四课 |
+| 1. 词法分析 lexer | 把字符串切成 token 流 | ocamllex、正则规则、lexbuf | ✅ 第三课（手写完成，ocamllex 选做待补） |
+| 2. 语法分析 parser | token 流 → AST | menhir（或手写递归下降）、文法、优先级 | ⬜️ 第四课（进行中） |
 | 3. AST + 求值 | ADT 建模、递归 match | 已会 | ✅（第二课已练） |
 | 4. 语义分析 / 类型检查 | 环境、符号表、类型推导 | `Map`/`Hashtbl`、`option`/`Result`、unification | ⬜️ |
 | 5. 中间表示 + 优化 | IR、数据流分析 | 模块封装、不可变更新、`Set`/`Map` | ⬜️ |
@@ -49,7 +49,7 @@
 
 ---
 
-## 第三课：词法分析 lexer TODO
+## 第三课：词法分析 lexer（2026-09-12）✅ 完成
 
 ### 概念
 
@@ -70,52 +70,127 @@ type token =
 ```
 注意：lexer 阶段的 `MINUS` 只表示"看到 `-` 字符"，是减法还是负号由 parser 决定。
 
-### 作业
+### 步骤 1：手写 tokenizer ✅
 
-**步骤 1（必做）：手写 tokenizer**
+- [calc2/calc2.ml](../calc2/calc2.ml) —— 手写 `tokenize : string -> token list`
+- 用尾递归 `aux pos tokens`，`pos` 当游标、`tokens` 当累加器（头插 + `List.rev` 收尾）
+- 多位数字：嵌套 `find_end` 递归找连续数字末尾，`String.sub` 取子串再 `int_of_string`
+- 跳空白、非法字符 `failwith`、末尾加 `EOF`
+- 批改 A：纯函数式尾递归写法地道。改进点：`string_of_token` 可用 `List.map` + `String.concat` 代替手写递归
+- 输出：`tokenize "1 + 23 * 4"` → `[INT 1; PLUS; INT 23; STAR; INT 4]` ✅
 
-在 `calc2/` 建 dune 工程，写 `calc2.ml`：
+### 步骤 2：用 ocamllex TODO（选做，未做）
 
-1. 定义上面的 `token` 类型（先不加 `EOF`，列表形式不需要）
-2. 手写 `tokenize : string -> token list`
-   - 提示：`String.to_seq` 或按索引遍历字符
-   - 多位数字要合并（`"123"` → `INT 123`，不是三个 `INT 1/2/3`）
-   - 跳过空白
-   - 非法字符 `failwith "unexpected char"`
-3. 写 `string_of_token : token -> string` 方便打印
-4. 测试：`tokenize "1 + 23 * 4"` 应得 `[INT 1; PLUS; INT 23; STAR; INT 4]`
+留到以后练 ocamllex 工具时再做，对比手写 vs 工具生成。
 
-**步骤 2（选做）：用 ocamllex**
-
-写 `calc2_lex.mll`，用 ocamllex 规则实现同样功能，对比手写 vs 工具生成。
-
-`.mll` 结构：
-```ocaml
-{
-(* 头部：OCaml 代码 *)
-}
-rule token = parse
-  | ['0'-'9']+  { INT (int_of_string (Lexing.lexeme lexbuf)) }
-  | '+'         { PLUS }
-  | [' ' '\t']+ { token lexbuf }   (* 跳过空白，递归 *)
-  | eof         { EOF }
-{
-(* 尾部 *)
-}
-```
-
-### 验收
-- `dune exec ./calc2.exe` 把 `"1 + 23 * 4"` 转成 `[INT 1; PLUS; INT 23; STAR; INT 4]` 并打印
-- 多位数字、跳空白、非法字符报错
+### 期间补充的知识点
+- 尾递归：递归调用是最后一步无后续计算，编译器优化成循环不溢出；累加器模式把"后续计算"提前算进参数
+- list 单向链表：头插 O(1)、尾插 O(n)，故只提供 `::` 头插运算符；"头插 + `List.rev`"是 O(n) 模式
+- 类型签名读法：`A -> B -> C -> D` 最右边是输出、左边全是输入（右结合 = 柯里化）
+- 标准库扩充：[ocaml-basics.md §10](ocaml-basics.md) 补了 List/String/Array/Queue/Stack/Hashtbl/Map/Set/Seq 完整对比 + 每函数调用示例
+- 类型推断：参数不用声明类型，编译器从调用处和函数体用法反推
 
 ---
 
-## 第四课：语法分析 parser TODO（第三课完成后展开）
+## 第四课：语法分析 parser TODO
 
-- 学 menhir（比 ocamlyacc 现代），把 token 流变成 AST
-- 文法、递归下降、优先级处理
-- 产物：能 parse `"1 + 2 * 3"` 成 `Add (Num 1, Mul (Num 2, Num 3))`
-- **结束时拥有能从字符串读入的计算器**
+### 概念
+
+```
+token 流：[INT 1; PLUS; INT 2; STAR; INT 3; EOF]
+   ↓ parser（本课）
+AST：    Add (Num 1, Mul (Num 2, Num 3))
+   ↓ eval（第二课已会）
+结果：   7
+```
+parser 职责：按语法规则把线性 token 流组装成树形 AST，处理**优先级**和**结合性**。
+- `1 + 2 * 3` → `Add (Num 1, Mul (Num 2, Num 3))`（`*` 优先级高，先结合）
+- `1 - 2 - 3` → `Sub (Sub (Num 1, Num 2), Num 3)`（左结合：`(1-2)-3 = -4`）
+
+### 核心方法：递归下降（手写 parser）
+
+每个优先级层次写一个函数，互相递归调用。文法分层（低 → 高优先级）：
+
+```
+expr   ::= term (('+' | '-') term)*      (* 加减，最低优先级 *)
+term   ::= factor (('*' | '/') factor)*  (* 乘除，较高 *)
+factor ::= INT | '(' expr ')' | '-' factor  (* 数字、括号、一元负号，最高 *)
+```
+
+三个函数对应三层（用 `and` 连接，相互递归）：
+
+```ocaml
+let rec parse_expr tokens = ...    (* 解析加减，调 parse_term *)
+and parse_term tokens = ...        (* 解析乘除，调 parse_factor *)
+and parse_factor tokens = ...      (* 解析数字/括号/负号，遇 ( 递归调 parse_expr *)
+```
+
+**优先级体现在分层**：低优先级在顶层，调用时先解析高优先级，所以高优先级先结合。
+
+### token 流读取：游标模式
+
+```ocaml
+let pos = ref 0
+let peek () = List.nth tokens !pos    (* 看当前 token，不推进 *)
+let advance () = incr pos              (* 消费当前 token *)
+```
+
+`peek` 看当前 token 决定怎么解析，`advance` 消费掉它。可变状态用 `let ... in` 限制在 `parse` 作用域内。
+
+### 左结合的关键
+
+`parse_expr` 的循环里把累积的 `left` 当新节点的左子树：
+
+```ocaml
+let rec loop left =
+  match peek () with
+  | PLUS -> advance ();
+            let right = parse_term () in
+            loop (Add (left, right))   (* 累积的 left 当新 Add 的左 → 左结合 *)
+  | _ -> left
+```
+
+所以 `1 - 2 - 3` = `Sub (Sub (Num 1, Num 2), Num 3)` = `(1-2)-3 = -4`。
+
+### 括号改变优先级
+
+`parse_factor` 遇到 `(` 递归调 `parse_expr`（回到顶层），括号里的整个表达式被当成一个 factor：
+
+```ocaml
+| LPAREN -> advance ();
+           let e = parse_expr () in   (* 递归回顶层 *)
+           (match peek () with RPAREN -> advance () | _ -> failwith "expected )");
+           e
+```
+
+所以 `(1 + 2) * 3` 里 `1 + 2` 被括号包成一个 factor，整体优先级高于外面的 `* 3`。
+
+### 作业
+
+在 `calc2/` 扩展或新建 `calc3/`，串联 `tokenize` + `parse` + `eval`，做从字符串读入的计算器：
+
+1. 保留第三课的 `tokenize`
+2. 保留第二课的 `expr` 类型和 `eval`（含 `Neg`）
+3. 新增 `parse : string -> expr`，用递归下降三层
+4. 入口测试：
+   ```ocaml
+   let () = parse "1 + 2 * 3" |> eval |> string_of_int |> print_endline   (* 7 *)
+   let () = parse "(1 + 2) * 3" |> eval |> string_of_int |> print_endline (* 9 *)
+   let () = parse "10 - 2 - 3" |> eval |> string_of_int |> print_endline   (* 5，左结合 *)
+   let () = parse "-5 + 3" |> eval |> string_of_int |> print_endline       (* -2 *)
+   ```
+
+### 验收
+- 四个测试输出 `7 / 9 / 5 / -2`
+- 理解：`1 - 2 - 3` 为什么是 5（左结合 `(1-2)-3`）；括号怎么改变优先级（`parse_factor` 遇 `(` 递归 `parse_expr`）
+
+### 预期坑
+- `peek` 读到 `EOF` 时 `List.nth` 越界（tokenize 末尾加了 `EOF`，正好可处理）
+- 忘了 `advance` 消费某 token → 死循环
+- 忘了 `and` 连接三个相互递归函数
+
+### 选做（有余力）
+- 用 menhir 重写（工业级工具，了解 `.mly` 文法声明 + 优先级声明）
 
 ## 第五课：扩展计算器 → 小语言 TODO
 
@@ -137,7 +212,7 @@ rule token = parse
 | 模块系统（`module`/`struct`/`sig`/`.mli`） | 多文件编译器、封装 IR | ⬜️ |
 | `option`/`Result` 错误处理 | parser 报错、查找可能失败 | ⬜️（`option` 概念已懂） |
 | `Map`/`Hashtbl`/`Set` | 符号表、环境、数据流分析 | ⬜️ |
-| ocamllex | 第三课 lexer | ⬜️ 即将学 |
-| menhir | 第四课 parser | ⬜️ |
+| ocamllex | 第三课 lexer | ⬜️ 选做待补（手写已会） |
+| menhir | 第四课 parser | ⬜️ 选做待补（手写递归下降进行中） |
 | `Printf.printf` 格式化 | 打印、代码生成 | 部分会 |
 | 尾递归 / 累加器 | 深递归优化 | ⬜️ |
