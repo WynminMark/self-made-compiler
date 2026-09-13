@@ -857,6 +857,215 @@ naturals
 
 ---
 
+## 10.6 编译器工具：ocamllex + menhir
+
+写编译器前端（lexer + parser）的两个标准工具。**都不是 OCaml 语言的一部分**，是独立的工具，dune 自动集成。它们用的指令（`%` 开头）和 OCaml 关键字是两回事。
+
+### 三个层次要分清
+
+| 层次 | 例子 | 在哪里 |
+|---|---|---|
+| **OCaml 关键字** | `let` `rec` `match` `type` `fun` | `.ml` 文件，语言保留字 |
+| **工具指令** | `%token` `%left` `%prec` `rule` | `.mly` / `.mll` 文件，工具解析 |
+| **OCaml 代码** | `Add (e1, e2)`、`open Tokens` | `.mly` 的 `%{ %}` 头部和 `{ }` 动作里 |
+
+---
+
+### ocamllex（词法分析生成器）
+
+**作用**：你写 `.mll` 规则文件，ocamllex 生成一个 `.ml`，提供"吃字符流吐 token"的 lexer 函数。代替手写 `tokenize`。
+
+#### `.mll` 文件结构
+
+```ocaml
+{
+(* 头部：OCaml 代码，open 模块、定义辅助函数 *)
+open Tokens
+}
+
+rule token = parse
+  | ['0'-'9']+      { INT (int_of_string (Lexing.lexeme lexbuf)) }
+  | '+'             { PLUS }
+  | '-'             { MINUS }
+  | '*'             { STAR }
+  | '/'             { SLASH }
+  | '('             { LPAREN }
+  | ')'             { RPAREN }
+  | [' ' '\t'\n']+  { token lexbuf }      (* 跳过空白，递归继续 *)
+  | eof             { EOF }
+  | _ as c          { failwith (Printf.sprintf "unexpected char %c" c) }
+
+{
+(* 尾部：可选 OCaml 代码 *)
+}
+```
+
+#### 逐段解释
+
+- `{ ... }` 头部/尾部 —— 普通 OCaml 代码块，通常 `open Tokens`
+- `rule token = parse` —— `rule`/`parse` 是 ocamllex 指令，定义一个叫 `token` 的 lexer 入口（`token` 是自己起的名）
+- `| 正则 { 动作 }` —— 每条规则：左边正则模式，右边匹配到时执行的 OCaml 代码（返回 token）
+- `lexbuf` —— 隐式可用的词法缓冲区变量（不用声明，ocamllex 注入）
+- `Lexing.lexeme lexbuf` —— 取这次匹配到的字符串
+- `eof` —— 特殊模式，输入结束
+
+#### 正则语法（ocamllex 用 POSIX 风格）
+
+| 正则 | 含义 |
+|---|---|
+| `'a'` | 字面字符 a |
+| `['0'-'9']` | 字符集：0 到 9 |
+| `['a'-'z' 'A'-'Z']` | 字母集（含空格分隔） |
+| `['0'-'9']+` | 一个或多个数字（`+` 重复） |
+| `['0'-'9']*` | 零或多个（`*`） |
+| `('a' \| 'b')+` | 分组 + 或 |
+| `[^'a']` | 非 a 的任意字符 |
+| `eof` | 输入结束（特殊） |
+
+#### 怎么用
+
+```ocaml
+let lexbuf = Lexing.from_string "1 + 2"    (* string → lexbuf *)
+let t1 = token lexbuf       (* INT 1 *)
+let t2 = token lexbuf       (* PLUS *)
+let t3 = token lexbuf       (* INT 2 *)
+let t4 = token lexbuf       (* EOF *)
+```
+
+每次调 `token lexbuf` 读一个 token 并推进位置。`Lexing.from_string` 把字符串包装成 lexbuf。
+
+#### dune 集成
+
+dune 自动识别 `.mll`，调 ocamllex 编译成 `.ml`。不用手动跑命令。`.mll` 和 `.ml` 放同目录，dune 自动处理依赖。
+
+---
+
+### menhir（语法分析生成器）
+
+**作用**：你写 `.mly` 文法文件，menhir 生成一个 `.ml` + `.mli`，提供 parser 函数。代替手写递归下降。比 ocamlyacc 现代化（更好的错误信息、LR(1) 而非 LALR）。
+
+#### `.mly` 文件结构
+
+```ocaml
+%{
+  (* 头部：OCaml 代码 *)
+  open Tokens
+%}
+
+(* 声明段：token、优先级、起点 *)
+%token <int> INT            (* 带值 token：<int> 是携带类型 *)
+%token PLUS MINUS STAR SLASH   (* 无值 token *)
+%token LPAREN RPAREN
+%token EOF
+
+%start <expr> main         (* 起点规则 main，返回 expr *)
+
+%left PLUS MINUS           (* 优先级低，左结合 *)
+%left STAR SLASH           (* 优先级高，左结合 *)
+%precedence NEG            (* 最高优先级，伪 token（无结合性）*)
+
+%%
+
+(* 规则段 *)
+main:
+  | e = expr EOF { e }
+
+expr:
+  | e1 = expr PLUS  e2 = expr { Add (e1, e2) }
+  | e1 = expr MINUS e2 = expr { Sub (e1, e2) }
+  | e1 = expr STAR  e2 = expr { Mul (e1, e2) }
+  | e1 = expr SLASH e2 = expr { Div (e1, e2) }
+  | MINUS e = expr %prec NEG { Neg (e) }
+  | n = INT                  { Num n }
+  | LPAREN e = expr RPAREN   { e }
+
+%%
+```
+
+#### menhir 指令清单
+
+| 指令 | 作用 | 例 |
+|---|---|---|
+| `%{ ... %}` | 头部 OCaml 代码块 | `open Tokens` |
+| `%% ... %%` | 规则段分隔（两个 `%%` 之间是文法） | — |
+| `%token` | 声明无值 token | `%token PLUS MINUS` |
+| `%token <T>` | 声明带值 token（携带类型 `T`） | `%token <int> INT` |
+| `%start <T> name` | 声明起点规则 `name`，返回类型 `T` | `%start <expr> main` |
+| `%left` | 声明左结合优先级（从低到高排） | `%left PLUS MINUS` |
+| `%right` | 声明右结合优先级 | `%right ASSIGN`（赋值右结合） |
+| `%precedence` | 声明优先级但不指定结合性（给伪 token） | `%precedence NEG` |
+| `%prec TOKEN` | 给单条规则指定优先级层次（在规则后） | `MINUS e = expr %prec NEG` |
+| `%nonassoc` | 声明无结合性（禁连续，如比较运算） | `%nonassoc EQ NEQ` |
+
+> 所有 `%` 开头的都是**指令**，不是 OCaml 关键字。它们只出现在 `.mly` 里。
+
+#### 规则语法
+
+```
+非终结符:
+  | 模式 { 动作 }
+  | 模式 { 动作 }
+```
+
+- `e1 = expr` —— 匹配 `expr`，绑定到名字 `e1`（`= 名字` 是绑定语法）
+- `PLUS` —— 字面 token（直接写 token 名，不绑定）
+- `{ Add (e1, e2) }` —— 动作：用绑定的名字构造 AST 节点
+
+#### 优先级怎么自动生效
+
+手写时要靠三层函数编码优先级。menhir 里**所有 `expr` 规则写一起**，靠 `%left` 声明自动解决冲突：
+
+- `1 + 2 * 3`：`*` 优先级高于 `+`（`%left STAR` 在 `%left PLUS` 后），先组合 `2*3` ✅
+- `1 - 2 - 3`：`%left MINUS` 左结合，先组合 `(1-2)` ✅
+
+#### `%prec NEG` 解决一元/二元冲突
+
+`MINUS` token 在两种规则出现：
+
+```
+二元减法：expr MINUS expr     ← 低优先级（%left MINUS 那层）
+一元负号：MINUS expr           ← 要高优先级（否则 -5*3 解析错）
+```
+
+`%precedence NEG` 声明最高层 → `MINUS e = expr %prec NEG` 把一元规则挂到最高层 → `-5 * 3` = `Mul (Neg (Num 5), Num 3)` = `(-5)*3` ✅
+
+#### dune 集成
+
+dune 自动识别 `.mly`，调 menhir 编译。`.mly` 和主程序 `.ml` 放同目录。生成的模块名 = 文件名首字母大写（`parser.mly` → `Parser` 模块）。
+
+主程序调用：
+
+```ocaml
+let parse input =
+  let tokens = tokenize input in          (* 自己的 lexer，或 ocamllex 生成 *)
+  let pos = ref tokens in
+  let next_token () =
+    match !pos with
+    | [] -> EOF
+    | t :: rest -> pos := rest; t
+  in
+  Parser.main next_token                 (* menhir 生成的 Parser 模块 *)
+```
+
+`Parser.main` 通常接受一个 `unit -> token` 读取器函数。确切签名看 dune 生成的 `_build/default/.../parser.mli`。
+
+---
+
+### 手写 vs 工具：何时用哪个
+
+| | 手写递归下降 | ocamllex + menhir |
+|---|---|---|
+| 学习价值 | 高（理解原理） | 实用（理解工具） |
+| 代码量 | 多 | 少 |
+| 优先级/结合性 | 靠函数结构编码 | 声明式 `%left` |
+| 错误信息 | 自己写 | 自动带位置 |
+| 维护 | 改文法要重写 | 改 `.mly` 一处 |
+| 工业级 | 少用 | 主流（OCaml/Rust/Coq 都用） |
+
+> 建议：手写一遍理解原理，之后用 menhir 提效。本课程的 calc2/calc3 是手写版，calc4 是 menhir 版。
+
+---
+
 ## 11. 可变性（命令式特性，了解即可）
 
 默认不可变。需要可变时：
@@ -1085,6 +1294,7 @@ Error: The value `hello' is required but not provided
 - `()` 是 unit，`let () = ...` 是 main 入口
 - **dune**：`(name X)` 必须对应 `X.ml`；产物 `X.exe`（`.exe` 是 dune 跨平台约定，Linux 也加）；`dune exec ./X.exe` 运行；警告默认当错误
 - **标准库**：`List.map` 转换、`List.fold_left` 累积、`List.rev` 反转、`List.iter` 副作用遍历；`String.sub` 取子串、`String.concat` 拼接；递归 + 头插 + `List.rev` 是列表处理经典模式
+- **编译器工具**：`.mll` 用 ocamllex（`rule ... parse` + 正则），`.mly` 用 menhir（`%token`/`%left`/`%prec`）；dune 自动识别编译；`%` 开头都是工具指令不是 OCaml 关键字
 
 ---
 

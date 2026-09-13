@@ -14,7 +14,7 @@
 |---|---|---|---|
 | 0. 基础 | let/rec/函数/ADT/match/管道/异常 | 同左 | ✅ |
 | 1. 词法分析 lexer | 把字符串切成 token 流 | ocamllex、正则规则、lexbuf | ✅ 第三课（手写完成，ocamllex 选做待补） |
-| 2. 语法分析 parser | token 流 → AST | menhir（或手写递归下降）、文法、优先级 | ⬜️ 第四课（进行中） |
+| 2. 语法分析 parser | token 流 → AST | menhir（或手写递归下降）、文法、优先级 | ✅ 第四课（手写 + menhir 都完成） |
 | 3. AST + 求值 | ADT 建模、递归 match | 已会 | ✅（第二课已练） |
 | 4. 语义分析 / 类型检查 | 环境、符号表、类型推导 | `Map`/`Hashtbl`、`option`/`Result`、unification | ⬜️ |
 | 5. 中间表示 + 优化 | IR、数据流分析 | 模块封装、不可变更新、`Set`/`Map` | ⬜️ |
@@ -92,7 +92,7 @@ type token =
 
 ---
 
-## 第四课：语法分析 parser TODO
+## 第四课：语法分析 parser（2026-09-13）✅ 完成
 
 ### 概念
 
@@ -107,96 +107,79 @@ parser 职责：按语法规则把线性 token 流组装成树形 AST，处理**
 - `1 + 2 * 3` → `Add (Num 1, Mul (Num 2, Num 3))`（`*` 优先级高，先结合）
 - `1 - 2 - 3` → `Sub (Sub (Num 1, Num 2), Num 3)`（左结合：`(1-2)-3 = -4`）
 
-### 核心方法：递归下降（手写 parser）
+### 步骤 1：手写递归下降 ✅
 
-每个优先级层次写一个函数，互相递归调用。文法分层（低 → 高优先级）：
+- [calc3/calc3.ml](../calc3/calc3.ml) —— 串联 tokenize + parse + eval，从字符串读入计算器
+- 文法三层：`expr`（加减）→ `term`（乘除）→ `factor`（数字/括号/负号），用 `and` 相互递归
+- 游标模式：`pos = ref 0` + `current_token`/`advance`
+- 左结合：`loop (Add (left, right))` 把累积 left 当新节点左子树
+- 括号：`parse_factor` 遇 `(` 递归 `parse_expr` 回顶层
+- 批改 A：四个测试 `7 / 9 / 5 / -2` 全过。改进点：`parse_expr/term/factor` 的 `tokens` 参数冗余（用闭包捕获外层 tokens 即可，可去掉）
 
-```
-expr   ::= term (('+' | '-') term)*      (* 加减，最低优先级 *)
-term   ::= factor (('*' | '/') factor)*  (* 乘除，较高 *)
-factor ::= INT | '(' expr ')' | '-' factor  (* 数字、括号、一元负号，最高 *)
-```
+### 步骤 2：menhir 重写 ✅
 
-三个函数对应三层（用 `and` 连接，相互递归）：
+- [calc4/](../calc4/) —— `parser.mly` + `tokens.ml` + `calc4.ml`，dune 集成 menhir
+- 学了：`.mly` 文法声明（`%token`/`%left`/`%prec`）、优先级自动解决冲突、`%prec NEG` 处理一元/二元冲突
+- 输出同为 `7 / 7 / 9 / 5 / -2`（有个重复测试可删）
 
-```ocaml
-let rec parse_expr tokens = ...    (* 解析加减，调 parse_term *)
-and parse_term tokens = ...        (* 解析乘除，调 parse_factor *)
-and parse_factor tokens = ...      (* 解析数字/括号/负号，遇 ( 递归调 parse_expr *)
-```
+### 踩坑（menhir + dune 集成）
+- **dune 不自动认 `.mly`**：要加 `(menhir (modules parser))` stanza，否则 `Unbound module Parser`
+- **循环依赖**：`expr` 定义在 `calc4.ml`，但 `calc4.ml` 依赖 `Parser`（从 `.mly` 生成）→ menhir `--infer` 看不到 `expr`。修法：把 `expr` 移到独立的 `tokens.ml`
+- **menhir 生成自己的 `token` 类型**：从 `tokens.ml` 删掉 `token`，`open Parser` 用 menhir 生成的
+- **`Parser.main` 期望 `Lexing.lexbuf -> token`**：手写 tokenizer 返回 `token list`，要写桥接 `lexer (_lexbuf : Lexing.lexbuf) = ...` 忽略 lexbuf 从列表读 + 传 dummy lexbuf
+- **`%precedence` 报 unknown directive**：换成 `%nonassoc`（功能等价）
 
-**优先级体现在分层**：低优先级在顶层，调用时先解析高优先级，所以高优先级先结合。
+### 期间补充的知识点
+- menhir 指令清单 + ocamllex 介绍：[ocaml-basics.md §10.6](ocaml-basics.md)
+- `t :: rest` 在模式位置（`->` 左边）是**拆解**不是头插；构造子造值/拆值用相同语法（对偶规则）
+- 桥接手写 tokenizer 和 menhir 接口：`lexbuf` 是 ocamllex/menhir 间的数据载体，`Lexing.from_string` 造 lexbuf
 
-### token 流读取：游标模式
-
-```ocaml
-let pos = ref 0
-let peek () = List.nth tokens !pos    (* 看当前 token，不推进 *)
-let advance () = incr pos              (* 消费当前 token *)
-```
-
-`peek` 看当前 token 决定怎么解析，`advance` 消费掉它。可变状态用 `let ... in` 限制在 `parse` 作用域内。
-
-### 左结合的关键
-
-`parse_expr` 的循环里把累积的 `left` 当新节点的左子树：
-
-```ocaml
-let rec loop left =
-  match peek () with
-  | PLUS -> advance ();
-            let right = parse_term () in
-            loop (Add (left, right))   (* 累积的 left 当新 Add 的左 → 左结合 *)
-  | _ -> left
-```
-
-所以 `1 - 2 - 3` = `Sub (Sub (Num 1, Num 2), Num 3)` = `(1-2)-3 = -4`。
-
-### 括号改变优先级
-
-`parse_factor` 遇到 `(` 递归调 `parse_expr`（回到顶层），括号里的整个表达式被当成一个 factor：
-
-```ocaml
-| LPAREN -> advance ();
-           let e = parse_expr () in   (* 递归回顶层 *)
-           (match peek () with RPAREN -> advance () | _ -> failwith "expected )");
-           e
-```
-
-所以 `(1 + 2) * 3` 里 `1 + 2` 被括号包成一个 factor，整体优先级高于外面的 `* 3`。
-
-### 作业
-
-在 `calc2/` 扩展或新建 `calc3/`，串联 `tokenize` + `parse` + `eval`，做从字符串读入的计算器：
-
-1. 保留第三课的 `tokenize`
-2. 保留第二课的 `expr` 类型和 `eval`（含 `Neg`）
-3. 新增 `parse : string -> expr`，用递归下降三层
-4. 入口测试：
-   ```ocaml
-   let () = parse "1 + 2 * 3" |> eval |> string_of_int |> print_endline   (* 7 *)
-   let () = parse "(1 + 2) * 3" |> eval |> string_of_int |> print_endline (* 9 *)
-   let () = parse "10 - 2 - 3" |> eval |> string_of_int |> print_endline   (* 5，左结合 *)
-   let () = parse "-5 + 3" |> eval |> string_of_int |> print_endline       (* -2 *)
-   ```
-
-### 验收
-- 四个测试输出 `7 / 9 / 5 / -2`
-- 理解：`1 - 2 - 3` 为什么是 5（左结合 `(1-2)-3`）；括号怎么改变优先级（`parse_factor` 遇 `(` 递归 `parse_expr`）
-
-### 预期坑
-- `peek` 读到 `EOF` 时 `List.nth` 越界（tokenize 末尾加了 `EOF`，正好可处理）
-- 忘了 `advance` 消费某 token → 死循环
-- 忘了 `and` 连接三个相互递归函数
-
-### 选做（有余力）
-- 用 menhir 重写（工业级工具，了解 `.mly` 文法声明 + 优先级声明）
+---
 
 ## 第五课：扩展计算器 → 小语言 TODO
 
-- 加变量（符号表 → 学 `Hashtbl`/`Map`）
-- 加 `if`/`let` 表达式（AST 扩展，体会穷尽性红利）
-- 加函数定义和调用
+从"计算器"升级成"小语言"——加变量、控制流、函数。这是从玩具到真实编译器的关键一步，开始接触**环境（符号表）**、**作用域**、**闭包**等核心概念。
+
+### 任务 1：加变量（环境 / 符号表）
+
+- 扩展 token：`IDENT of string`（标识符）、`LET`、`ASSIGN`（`=`）
+- 扩展 AST：`Var of string`（变量引用）、`Let of string * expr * expr`（let 绑定：`let x = e1 in e2`）
+- 扩展 lexer：标识符正则 `['a'-'z' 'A'-'Z']['a'-'z' 'A'-'Z' '0'-'9']*`、关键字识别
+- 扩展 parser：变量声明和引用
+- 扩展 eval：`eval : expr -> env -> int`，加 `env` 参数（变量名→值的映射）
+  - `env` 用 `Hashtbl`（可变，简单）或 `(string, int) list`（不可变，函数式）
+  - `Let (x, e1, e2)`：先 eval e1 得 v，把 (x, v) 加进 env，再 eval e2
+  - `Var x`：从 env 查找 x 的值
+- 测试：`let x = 5 in x * 2` → 10；`let x = 1 in let x = x + 1 in x` → 2（体会 shadowing）
+
+### 任务 2：加控制流（`if` 表达式）
+
+- 扩展 AST：`If of expr * expr * expr`（条件、then、else）
+- 扩展 token/lexer/parser
+- eval：`If (c, t, e)` → `if eval c <> 0 then eval t else eval e`
+- 加布尔：要么用 int（0=false，非0=true），要么加 `bool` 类型
+- 测试：`if 1 then 10 else 20` → 10；`let x = 5 in if x > 3 then 1 else 0` → 1
+- 需要比较运算符 `>` `<` `=`，AST 加 `Gt/Lt/Eq`
+
+### 任务 3（选做）：加函数定义和调用
+
+- 扩展 AST：`Fun of string * expr`（lambda）、`App of expr * expr`（调用）
+- 加 `let f x = e1 in e2` 语法糖
+- eval：函数是闭包（捕获定义时的环境），调用时绑定参数
+- 这是迈向函数式语言的关键。会涉及**闭包**和**词法作用域**
+- 测试：`let f = fun x -> x + 1 in f 5` → 6；`let add = fun x -> fun y -> x + y in add 3 4` → 7（柯里化）
+
+### 验收
+- 变量能声明、引用、shadowing
+- `if` 表达式能工作
+- 理解环境怎么传递（`eval : expr -> env -> int` 的 env 参数）
+- 思考：env 用 `Hashtbl`（可变）vs `(string, int) list`（不可变）的区别？函数式 vs 命令式的取舍
+
+### 预期坑
+- 作用域：`let x = e1 in e2` 里 x 只在 e2 可见，eval e2 后要"弹出" x（可变 Hashtbl）或用新环境（不可变 list）
+- shadowing：`let x = ... in let x = ... in` 内层 x 不影响外层
+- 关键字 vs 标识符：lexer 要先识别关键字（`let`/`if`/`then`/`else`），再当普通标识符
+- 函数（任务3）的闭包：环境捕获时机（定义时还是调用时？词法作用域是定义时）
 
 ## 第六课起：真正的编译器 TODO
 
@@ -213,6 +196,6 @@ let rec loop left =
 | `option`/`Result` 错误处理 | parser 报错、查找可能失败 | ⬜️（`option` 概念已懂） |
 | `Map`/`Hashtbl`/`Set` | 符号表、环境、数据流分析 | ⬜️ |
 | ocamllex | 第三课 lexer | ⬜️ 选做待补（手写已会） |
-| menhir | 第四课 parser | ⬜️ 选做待补（手写递归下降进行中） |
+| menhir | 第四课 parser | ✅ 第四课完成（手写 + menhir 都做了） |
 | `Printf.printf` 格式化 | 打印、代码生成 | 部分会 |
 | 尾递归 / 累加器 | 深递归优化 | ⬜️ |

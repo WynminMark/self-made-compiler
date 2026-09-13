@@ -1,0 +1,6 @@
+(executable
+ (name calc4)
+ (libraries menhirLib))
+
+(menhir
+ (modules parser))
